@@ -32,6 +32,7 @@ __all__ = [
     # hostname.py
     'is_valid_hostname',
 ]
+print('Executing %s' %  __file__)
 
 import sys
 if sys.version_info[:2] < (2, 6):
@@ -44,5 +45,7 @@ from .alexa import *
 from .p2p import *
 from .porn import *
 from .hostname import *
+
+del sys, absolute_import
 
 __version__ = '0.1.2'

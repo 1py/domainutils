@@ -7,6 +7,7 @@
 # UPDATED ON
 # 2013: 06/10, 06/12
 #
+print('Executing %s' %  __file__)
 
 import unittest
 

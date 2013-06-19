@@ -15,6 +15,7 @@ Utility functions
 __all__ = [
     'is_valid_hostname',
 ]
+print('Executing %s' %  __file__)
 
 import re
 

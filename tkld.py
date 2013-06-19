@@ -1,8 +1,7 @@
-#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 #
 # Copyright (c) 2013 Pengkui Luo <pengkui.luo@gmail.com>
-# Updated: 2013-06-12
+# Updated 6/18/2013
 #
 # This module was modified based on the same file in package publicsuffix-1.0.2
 # http://pypi.python.org/pypi/publicsuffix
@@ -40,128 +39,117 @@
 # see the license block at the top of the file itself.
 
 __all__ = [
-    'TKLD',
     'get_t2ld',
     'get_sld_tld',
     'get_t3ld',
     'is_fqdn',
 ]
+print('Executing %s' %  __file__)
 
 import codecs
 from os.path import join, dirname
 
-import meta
+#-----------------------------------------------------------------------------
+# Parses public suffix list, and build the tree structure
+#
+# input_file is a file object or another iterable that returns
+# lines of a public suffix list file. If input_file is None, an
+# UTF-8 encoded file named "publicsuffix.txt" in the same
+# directory as this Python module is used.
+# The file format is described at http://publicsuffix.org/list/
+#-----------------------------------------------------------------------------
+
+# Two key data containers
+Root = [0]
+Domain_to_t2ld_cache = {}
+
+def _find_node (parent, parts):
+    if not parts:
+        return parent
+    if len(parent) == 1:
+        parent.append({})
+    assert len(parent) == 2
+    negate, children = parent
+    child = parts.pop()
+    child_node = children.get(child, None)
+    if not child_node:
+        children[child] = child_node = [0]
+    return _find_node(child_node, parts)
+
+def _add_rule (root, rule):
+    if rule.startswith('!'):
+        negate = 1
+        rule = rule[1:]
+    else:
+        negate = 0
+    parts = rule.split('.')
+    _find_node(root, parts)[0] = negate
+
+PATH = join(dirname(__file__), '@data', 'tkld')
+with codecs.open(join(PATH, 'effective_tld_names.@r.txt'), 'r', 'utf8') as fr:
+    for line in fr:
+        line = line.strip()
+        if line.startswith('//') or not line:
+            continue
+        _add_rule (Root, line.split()[0].lstrip('.'))  # Root is changed
+
+def _simplify (node):
+    if len(node) == 1:
+        return node[0]
+    return node[0], {k: _simplify(v) for k,v in node[1].items()}
+
+Root = _simplify (Root)
 
 
-class TKLD (object):
-    __metaclass__ = meta.Singleton
-    path = join(dirname(__file__), '@data', 'tkld')
+#-----------------------------------------------------------------------------
+# Lookup functions
+#-----------------------------------------------------------------------------
 
-    def __init__ (self):
-        """Reads and parses public suffix list.
-
-        input_file is a file object or another iterable that returns
-        lines of a public suffix list file. If input_file is None, an
-        UTF-8 encoded file named "publicsuffix.txt" in the same
-        directory as this Python module is used.
-
-        The file format is described at http://publicsuffix.org/list/
-        """
-        print 'Calling TKLD.__init__()'
-        tld_data = join(self.path, 'effective_tld_names.@r.txt')
-        input_file = codecs.open(tld_data, "r", "utf8")
-        root = self._build_structure(input_file)
-        self.root = self._simplify(root)
-        self._domain_to_t2ld_cache = {}
-
-    def _find_node(self, parent, parts):
-        if not parts:
-            return parent
-        if len(parent) == 1:
-            parent.append({})
-        assert len(parent) == 2
+def _lookup_node (matches, depth, parent, parts):
+    if parent in (0, 1):
+        negate = parent
+        children = None
+    else:
         negate, children = parent
-        child = parts.pop()
-        child_node = children.get(child, None)
-        if not child_node:
-            children[child] = child_node = [0]
-        return self._find_node(child_node, parts)
-
-    def _add_rule(self, root, rule):
-        if rule.startswith('!'):
-            negate = 1
-            rule = rule[1:]
-        else:
-            negate = 0
-        parts = rule.split('.')
-        self._find_node(root, parts)[0] = negate
-
-    def _simplify(self, node):
-        if len(node) == 1:
-            return node[0]
-        return node[0], {k: self._simplify(v) for k,v in node[1].items()}
-
-    def _build_structure(self, fp):
-        root = [0]
-        for line in fp:
-            line = line.strip()
-            if line.startswith('//') or not line:
-                continue
-            self._add_rule(root, line.split()[0].lstrip('.'))
-        return root
-
-    def _lookup_node(self, matches, depth, parent, parts):
-        if parent in (0, 1):
-            negate = parent
-            children = None
-        else:
-            negate, children = parent
-        matches[-depth] = negate
-        if depth < len(parts) and children:
-            for name in ('*', parts[-depth]):
-                child = children.get(name, None)
-                if child is not None:
-                    self._lookup_node(matches, depth+1, child, parts)
-
-    def get_t2ld (self, domain):
-        """i.e. T2LD, e.g. "www.example.com" -> "example.com"
-        and also return TLD if get_tld=True.
-
-        Calling this function with a DNS name will return the
-        public suffix for that name.
-
-        Note that if the input does not contain a valid TLD,
-        e.g. "xxx.residential.fw" in which "fw" is not a valid TLD,
-        the returned public suffix will be "fw", and TLD will be empty
-
-        Note that for internationalized domains the list at
-        http://publicsuffix.org uses decoded names, so it is
-        up to the caller to decode any Punycode-encoded names.
-
-        """
-        try:
-            return self._domain_to_t2ld_cache [domain]
-        except KeyError:
-            parts = domain.lower().lstrip('.').split('.')
-            hits = [None] * len(parts)
-            self._lookup_node(hits, 1, self.root, parts)
-            for i, what in enumerate(hits):
-                if what is not None and what == 0:
-                    t2ld = '.'.join(parts[i:])
-                    self._domain_to_t2ld_cache [domain] = t2ld
-                    return t2ld
-
-
-###############################################################################
-
-TkLD = TKLD()
+    matches[-depth] = negate
+    if depth < len(parts) and children:
+        for name in ('*', parts[-depth]):
+            child = children.get(name, None)
+            if child is not None:
+                _lookup_node (matches, depth+1, child, parts)
 
 def get_t2ld (domain):
-    return TkLD.get_t2ld (domain)
+    """i.e. T2LD, e.g. "www.example.com" -> "example.com"
+    and also return TLD if get_tld=True.
+
+    Calling this function with a DNS name will return the
+    public suffix for that name.
+
+    Note that if the input does not contain a valid TLD,
+    e.g. "xxx.residential.fw" in which "fw" is not a valid TLD,
+    the returned public suffix will be "fw", and TLD will be empty
+
+    Note that for internationalized domains the list at
+    http://publicsuffix.org uses decoded names, so it is
+    up to the caller to decode any Punycode-encoded names.
+
+    """
+    global Root, Domain_to_t2ld_cache
+    try:
+        return Domain_to_t2ld_cache [domain]
+    except KeyError:
+        parts = domain.lower().lstrip('.').split('.')
+        hits = [None] * len(parts)
+        _lookup_node (hits, 1, Root, parts)
+        for i, what in enumerate(hits):
+            if what is not None and what == 0:
+                t2ld = '.'.join(parts[i:])
+                Domain_to_t2ld_cache [domain] = t2ld
+                return t2ld
 
 def get_sld_tld (domain, t2ld=None):
     if t2ld is None:
-        t2ld = TkLD.get_t2ld (domain)
+        t2ld = get_t2ld (domain)
     t2s = t2ld.split('.')
     sld = t2s[0]
     tld = '.'.join(t2s[1:])
@@ -169,7 +157,7 @@ def get_sld_tld (domain, t2ld=None):
 
 def get_t3ld (domain, t2ld=None):
     if t2ld is None:
-        t2ld = TkLD.get_t2ld (domain)
+        t2ld = get_t2ld (domain)
     if len(t2ld) == len(domain):
         t3ld = t2ld
     else:
@@ -181,18 +169,3 @@ def is_fqdn (domain):
     """Whether the input domain is a FQDN, i.e. ending with a valid TLD."""
     _, tld = get_sld_tld (domain)
     return tld != ''
-
-
-if __name__ == '__main__':
-
-    domain = 'a.mail.google.com'
-    t2ld = get_t2ld (domain)
-    sld, tld = get_sld_tld(domain, t2ld=t2ld)
-    t3ld = get_t3ld (domain, t2ld=t2ld)
-    print t3ld, t2ld, sld, tld
-    print is_fqdn (domain)
-
-    t2ld = get_t2ld (domain)
-    sld, tld = get_sld_tld(domain, t2ld=t2ld)
-    t3ld = get_t3ld (domain, t2ld=t2ld)
-    print t3ld, t2ld, sld, tld

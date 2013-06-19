@@ -11,6 +11,8 @@
 Unit tests
 
 """
+print('Executing %s' %  __file__)
+
 import unittest
 
 import domainutils as dmu
